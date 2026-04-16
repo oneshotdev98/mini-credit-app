@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-brand-50: oklch(0.97 0.02 277);
+  --color-brand-100: oklch(0.93 0.05 277);
+  --color-brand-500: oklch(0.55 0.2 277);
+  --color-brand-600: oklch(0.48 0.22 277);
+  --color-brand-700: oklch(0.42 0.22 277);
+}
+
+/* ─── Base resets ───────────────────────────────────────────── */
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  color: #0f172a;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f1f5f9;
+  background-image:
+    radial-gradient(ellipse 120% 80% at 50% -40%, rgb(199 210 254 / 0.45), transparent 55%),
+    radial-gradient(ellipse 60% 50% at 100% 0%, rgb(224 231 255 / 0.35), transparent 45%),
+    radial-gradient(ellipse 50% 40% at 0% 20%, rgb(226 232 240 / 0.6), transparent 50%);
+  background-attachment: fixed;
+}
+
+/* ─── Typography ────────────────────────────────────────────── */
+
+h1, h2, h3, h4 {
+  letter-spacing: -0.01em;
+}
+
+/* ─── Form elements ─────────────────────────────────────────── */
+
+input[type="text"],
+input[type="email"],
+input[type="url"],
+input[type="number"],
+input[type="date"],
+input[type="tel"],
+select,
+textarea {
+  display: block;
+  width: 100%;
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  border: 1.5px solid #d1d5db;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  background: white;
+  color: #111827;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  outline: none;
+  appearance: none;
+}
+
+textarea {
+  height: auto;
+  padding: 0.625rem 0.75rem;
+  min-height: 5rem;
+}
+
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2.5rem;
+}
+
+input:hover:not(:disabled):not(:focus),
+select:hover:not(:disabled):not(:focus) {
+  border-color: #9ca3af;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgb(99 102 241 / 0.18);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 0.375rem;
+  line-height: 1.25;
+}
+
+/* ─── Animations ────────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 500px; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-in {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+.animate-fade {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-spin {
+  animation: spin 0.8s linear infinite;
+}
+
+/* ─── Focus ring ────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+
+/* ─── Surfaces (shared card chrome) ─────────────────────────── */
+
+.app-card {
+  border-radius: 1rem;
+  border: 1px solid rgb(226 232 240 / 0.9);
+  background: rgb(255 255 255 / 0.85);
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 12px 40px -16px rgb(15 23 42 / 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.app-card-solid {
+  border-radius: 1rem;
+  border: 1px solid rgb(226 232 240);
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.06);
+}
+
+/* ─── Selection ─────────────────────────────────────────────── */
+
+::selection {
+  background: #c7d2fe;
+  color: #312e81;
+}
