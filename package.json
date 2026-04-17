@@ -13,6 +13,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@thednp/dommatrix": "^3.0.4",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.8.0",
     "mammoth": "^1.12.0",

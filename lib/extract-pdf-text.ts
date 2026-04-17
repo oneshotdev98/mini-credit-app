@@ -1,3 +1,4 @@
+import "./pdfjs-node-polyfill";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
