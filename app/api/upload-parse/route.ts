@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import pdfParse from "pdf-parse";
+import { extractPdfText } from "@/lib/extract-pdf-text";
 
 export const runtime = "nodejs";
-
-async function extractPdfText(buf: Buffer): Promise<string> {
-  const data = await pdfParse(buf);
-  return (data.text ?? "").trim();
-}
 
 const CREDIT_TERMS = ["net_10", "net_20", "net_30"] as const;
 const REVENUE_BANDS = [

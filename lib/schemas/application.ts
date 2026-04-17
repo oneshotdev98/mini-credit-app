@@ -27,30 +27,55 @@ export const tradeRefSlotDraftSchema = z.object({
   contactPosition: z.string().optional().nullable(),
 });
 
-export const vendorDraftApplicationBodySchema = z.object({
-  companyName: z
-    .union([z.string(), z.null()])
-    .optional()
-    .transform((v) =>
-      typeof v === "string" && v.trim() ? v.trim() : null
+export const vendorDraftApplicationBodySchema = z
+  .object({
+    companyName: z
+      .union([z.string(), z.null()])
+      .optional()
+      .transform((v) =>
+        typeof v === "string" && v.trim() ? v.trim() : null
+      ),
+    dba: z.string().optional().nullable(),
+    countryOfIncorporation: z.string().optional().nullable(),
+    websiteUrl: z.string().optional().nullable(),
+    creditAmountRequested: z.string().optional().nullable(),
+    creditTermRequested: z.preprocess(
+      (v) =>
+        typeof v === "string" && v.trim() !== "" ? v.trim() : undefined,
+      z.enum(creditTermValues, {
+        message: "Select a credit term (Net 10 / 20 / 30).",
+      })
     ),
-  dba: z.string().optional().nullable(),
-  countryOfIncorporation: z.string().optional().nullable(),
-  websiteUrl: z.string().optional().nullable(),
-  creditAmountRequested: z.string().optional().nullable(),
-  creditTermRequested: z.preprocess(
-    (v) =>
-      typeof v === "string" && v.trim() !== "" ? v.trim() : undefined,
-    z.enum(creditTermValues, {
-      message: "Select a credit term (Net 10 / 20 / 30).",
-    })
-  ),
-  revenueBand: z.enum(revenueBandValues).optional().nullable(),
-  billingContactName: z.string().optional().nullable(),
-  billingContactEmail: z.string().optional().nullable(),
-  tradeRef1: tradeRefSlotDraftSchema.optional().nullable(),
-  tradeRef2: tradeRefSlotDraftSchema.optional().nullable(),
-});
+    revenueBand: z.enum(revenueBandValues).optional().nullable(),
+    billingContactName: z.string().optional().nullable(),
+    billingContactEmail: z.string().optional().nullable(),
+    tradeRef1: tradeRefSlotDraftSchema.optional().nullable(),
+    tradeRef2: tradeRefSlotDraftSchema.optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    const slots = [
+      { slot: 1 as const, key: "tradeRef1" as const, ref: data.tradeRef1 },
+      { slot: 2 as const, key: "tradeRef2" as const, ref: data.tradeRef2 },
+    ];
+    for (const { slot, key, ref } of slots) {
+      if (!ref?.businessName?.trim()) continue;
+      if (!engagementDatesPaired(ref)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Trade reference ${slot}: enter both engagement start and end, or leave both blank.`,
+          path: [key, "engagementEnd"],
+        });
+        continue;
+      }
+      if (!engagementEndOnOrAfterStart(ref)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Trade reference ${slot}: engagement end must be on or after engagement start.`,
+          path: [key, "engagementEnd"],
+        });
+      }
+    }
+  });
 
 export type VendorDraftApplicationBody = z.infer<
   typeof vendorDraftApplicationBodySchema
@@ -91,6 +116,19 @@ function engagementDatesPaired(ref: {
   const e = ref.engagementEnd?.trim();
   if (!s && !e) return true;
   return Boolean(s && e);
+}
+
+function engagementEndOnOrAfterStart(ref: {
+  engagementStart?: string | null;
+  engagementEnd?: string | null;
+}): boolean {
+  const s = ref.engagementStart?.trim();
+  const e = ref.engagementEnd?.trim();
+  if (!s || !e) return true;
+  const ds = Date.parse(s);
+  const de = Date.parse(e);
+  if (Number.isNaN(ds) || Number.isNaN(de)) return true;
+  return de >= ds;
 }
 
 function strOrEmpty(v: unknown): string {
@@ -178,6 +216,28 @@ export const recipientSubmitBodySchema = z
         code: z.ZodIssueCode.custom,
         message:
           "Trade reference 2: enter both engagement start and end, or leave both blank.",
+        path: ["tradeRef2", "engagementEnd"],
+      });
+    }
+    if (
+      engagementDatesPaired(data.tradeRef1) &&
+      !engagementEndOnOrAfterStart(data.tradeRef1)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Trade reference 1: engagement end must be on or after engagement start.",
+        path: ["tradeRef1", "engagementEnd"],
+      });
+    }
+    if (
+      engagementDatesPaired(data.tradeRef2) &&
+      !engagementEndOnOrAfterStart(data.tradeRef2)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Trade reference 2: engagement end must be on or after engagement start.",
         path: ["tradeRef2", "engagementEnd"],
       });
     }

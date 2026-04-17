@@ -40,7 +40,10 @@ type ParsedData = {
 export default function NewApplicationPage() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("build");
-  const [uploadedData, setUploadedData] = useState<ParsedData | null>(null);
+  const [appliedUploadData, setAppliedUploadData] = useState<
+    ParsedData | undefined
+  >(undefined);
+  const [formRemountKey, setFormRemountKey] = useState(0);
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 animate-in">
@@ -101,15 +104,17 @@ export default function NewApplicationPage() {
         </button>
       </div>
 
-      {tab === "upload" && !uploadedData ? (
+      {tab === "upload" ? (
         <UploadParser
-          onParsed={(data) => {
-            setUploadedData(data);
+          onApplyToForm={(data) => {
+            setAppliedUploadData(data);
+            setFormRemountKey((k) => k + 1);
             setTab("build");
           }}
         />
       ) : (
         <ApplicationForm
+          key={formRemountKey}
           onSubmit={async (fd) => {
             const res = await fetch("/api/applications", {
               method: "POST",
@@ -127,7 +132,7 @@ export default function NewApplicationPage() {
             }
             return {};
           }}
-          initialData={uploadedData ?? undefined}
+          initialData={appliedUploadData}
           submitLabel="Save as Draft"
           draftMode
         />

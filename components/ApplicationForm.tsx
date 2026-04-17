@@ -11,7 +11,33 @@ import {
   vendorDraftApplicationBodySchema,
 } from "@/lib/schemas/application";
 import { COUNTRIES, CREDIT_TERMS, REVENUE_BANDS } from "@/lib/utils";
+import type { ZodIssue } from "zod";
 import { useState, type FormEvent } from "react";
+
+function isTradeRefEngagementIssue(issue: ZodIssue): boolean {
+  const p0 = issue.path[0];
+  const p1 = issue.path[1];
+  if (p0 !== "tradeRef1" && p0 !== "tradeRef2") return false;
+  return p1 === "engagementStart" || p1 === "engagementEnd";
+}
+
+function engagementMessagesByTradeRef(
+  issues: ZodIssue[]
+): Partial<Record<"tradeRef1" | "tradeRef2", string>> {
+  const acc: Partial<Record<"tradeRef1" | "tradeRef2", string[]>> = {};
+  for (const issue of issues) {
+    if (!isTradeRefEngagementIssue(issue)) continue;
+    const key = issue.path[0] as "tradeRef1" | "tradeRef2";
+    if (!acc[key]) acc[key] = [];
+    acc[key]!.push(issue.message);
+  }
+  const out: Partial<Record<"tradeRef1" | "tradeRef2", string>> = {};
+  for (const k of ["tradeRef1", "tradeRef2"] as const) {
+    const msgs = acc[k];
+    if (msgs?.length) out[k] = [...new Set(msgs)].join(" ");
+  }
+  return out;
+}
 
 type TradeRef = {
   businessName?: string | null;
@@ -56,6 +82,9 @@ export default function ApplicationForm({
   const [pending, setPending] = useState(false);
   const [ref1Open, setRef1Open] = useState(true);
   const [ref2Open, setRef2Open] = useState(true);
+  const [engagementErrors, setEngagementErrors] = useState<
+    Partial<Record<"tradeRef1" | "tradeRef2", string>>
+  >({});
 
   const recipientStrict = isRecipient && !draftMode;
   const creditTermRequired = recipientStrict || draftMode;
@@ -64,12 +93,21 @@ export default function ApplicationForm({
     e.preventDefault();
     setPending(true);
     setState({});
+    setEngagementErrors({});
     const fd = new FormData(e.currentTarget);
     if (recipientStrict) {
       const body = applicationBodyFromFormData(fd);
       const parsed = recipientSubmitBodySchema.safeParse(body);
       if (!parsed.success) {
-        setState({ error: zodErrorMessage(parsed.error) });
+        setEngagementErrors(
+          engagementMessagesByTradeRef(parsed.error.issues)
+        );
+        const top = parsed.error.issues.find((i) => !isTradeRefEngagementIssue(i));
+        setState({
+          error:
+            top?.message ??
+            "Please fix the trade reference engagement dates below.",
+        });
         setPending(false);
         return;
       }
@@ -77,7 +115,23 @@ export default function ApplicationForm({
       const body = vendorDraftBodyFromFormData(fd);
       const parsed = vendorDraftApplicationBodySchema.safeParse(body);
       if (!parsed.success) {
-        setState({ error: zodErrorMessage(parsed.error) });
+        const engagementByRef = engagementMessagesByTradeRef(
+          parsed.error.issues
+        );
+        setEngagementErrors(engagementByRef);
+        const top = parsed.error.issues.find(
+          (i) => !isTradeRefEngagementIssue(i)
+        );
+        const hasEngagementIssue =
+          Boolean(engagementByRef.tradeRef1) ||
+          Boolean(engagementByRef.tradeRef2);
+        setState({
+          error:
+            top?.message ??
+            (hasEngagementIssue
+              ? "Please fix the trade reference engagement dates below."
+              : zodErrorMessage(parsed.error)),
+        });
         setPending(false);
         return;
       }
@@ -181,6 +235,11 @@ export default function ApplicationForm({
         const ref = slot === 1 ? initialData?.tradeRef1 : initialData?.tradeRef2;
         const isOpen = slot === 1 ? ref1Open : ref2Open;
         const toggle = slot === 1 ? setRef1Open : setRef2Open;
+        const tradeRefKey = slot === 1 ? "tradeRef1" : "tradeRef2";
+        const showEngagementHints = recipientStrict || draftMode;
+        const engagementHint = showEngagementHints
+          ? engagementErrors[tradeRefKey]
+          : undefined;
 
         return (
           <div
@@ -245,6 +304,15 @@ export default function ApplicationForm({
                       required={recipientStrict}
                       defaultValue={ref?.businessName ?? ""}
                       placeholder="Reference company name"
+                      onChange={(e) => {
+                        if (!draftMode || e.target.value?.trim()) return;
+                        setEngagementErrors((prev) => {
+                          if (!prev[tradeRefKey]) return prev;
+                          const next = { ...prev };
+                          delete next[tradeRefKey];
+                          return next;
+                        });
+                      }}
                     />
                   </div>
                   <div>
@@ -256,6 +324,14 @@ export default function ApplicationForm({
                       name={`tradeRef${slot}_engagementStart`}
                       type="date"
                       defaultValue={ref?.engagementStart ?? ""}
+                      onChange={() =>
+                        setEngagementErrors((prev) => {
+                          if (!prev[tradeRefKey]) return prev;
+                          const next = { ...prev };
+                          delete next[tradeRefKey];
+                          return next;
+                        })
+                      }
                     />
                   </div>
                   <div>
@@ -267,8 +343,24 @@ export default function ApplicationForm({
                       name={`tradeRef${slot}_engagementEnd`}
                       type="date"
                       defaultValue={ref?.engagementEnd ?? ""}
+                      onChange={() =>
+                        setEngagementErrors((prev) => {
+                          if (!prev[tradeRefKey]) return prev;
+                          const next = { ...prev };
+                          delete next[tradeRefKey];
+                          return next;
+                        })
+                      }
                     />
                   </div>
+                  {engagementHint ? (
+                    <p
+                      className="sm:col-span-2 text-sm text-red-600 -mt-1"
+                      role="alert"
+                    >
+                      {engagementHint}
+                    </p>
+                  ) : null}
                   <div>
                     <label htmlFor={`tradeRef${slot}_contactName`}>
                       Contact Name
@@ -415,7 +507,9 @@ export default function ApplicationForm({
             {draftMode ? (
               <span>
                 <span className="text-red-500 font-medium">*</span> Credit term
-                is required. Otherwise leave fields blank if unknown — the
+                is required. If you enter a trade reference business name,
+                engagement start and end must both be set or both empty, and end
+                on or after start. Otherwise leave fields blank if unknown — the
                 applicant completes and confirms on their link before
                 submitting.
               </span>
@@ -423,7 +517,8 @@ export default function ApplicationForm({
               <span>
                 <span className="text-red-500 font-medium">*</span> All starred
                 fields are required. Trade references need a business name each;
-                engagement dates must be both filled or both empty.
+                engagement dates must be both filled or both empty, and end must
+                be on or after start.
               </span>
             ) : (
               <>

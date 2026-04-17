@@ -31,22 +31,34 @@ type ParsedData = {
 };
 
 type Props = {
-  onParsed: (data: ParsedData) => void;
+  onApplyToForm: (data: ParsedData) => void;
 };
 
-export default function UploadParser({ onParsed }: Props) {
+export default function UploadParser({ onApplyToForm }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [droppedFields, setDroppedFields] = useState<string[]>([]);
   const [dragOver, setDragOver] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const resetFileInput = () => {
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const clearReadyState = () => {
+    setParsedData(null);
+    setDroppedFields([]);
+    setFile(null);
+    resetFileInput();
+  };
 
   const handleFile = async (f: File) => {
     setFile(f);
     setError(null);
     setDroppedFields([]);
+    setParsedData(null);
     setParsing(true);
 
     try {
@@ -69,38 +81,41 @@ export default function UploadParser({ onParsed }: Props) {
         setDroppedFields(result.droppedFields);
       }
 
-      setSuccess(true);
+      setParsedData(result.data as ParsedData);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to parse the uploaded file.");
+    } finally {
       setParsing(false);
-
-      setTimeout(() => {
-        onParsed(result.data);
-      }, 1500);
-    } catch (e: any) {
-      setError(e.message || "Failed to parse the uploaded file.");
-      setParsing(false);
+      resetFileInput();
     }
   };
 
   return (
     <div className="space-y-5 animate-in">
       <div
-        className={`relative rounded-2xl border-2 border-dashed p-10 sm:p-12 text-center cursor-pointer transition-all ${
-          dragOver
-            ? "border-indigo-400 bg-indigo-50/80 shadow-inner ring-2 ring-indigo-200/50"
-            : "border-slate-300/90 bg-white/90 hover:border-indigo-300 hover:bg-indigo-50/30 shadow-sm"
+        className={`relative rounded-2xl border-2 border-dashed p-10 sm:p-12 text-center transition-all ${
+          parsedData
+            ? "border-slate-200 bg-slate-50/50 cursor-default"
+            : dragOver
+              ? "border-indigo-400 bg-indigo-50/80 shadow-inner ring-2 ring-indigo-200/50 cursor-pointer"
+              : "border-slate-300/90 bg-white/90 hover:border-indigo-300 hover:bg-indigo-50/30 shadow-sm cursor-pointer"
         }`}
         onDragOver={(e) => {
+          if (parsedData) return;
           e.preventDefault();
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
+          if (parsedData) return;
           e.preventDefault();
           setDragOver(false);
           const f = e.dataTransfer.files[0];
-          if (f) handleFile(f);
+          if (f) void handleFile(f);
         }}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => {
+          if (!parsedData && !parsing) inputRef.current?.click();
+        }}
       >
         <input
           ref={inputRef}
@@ -109,7 +124,7 @@ export default function UploadParser({ onParsed }: Props) {
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) handleFile(f);
+            if (f) void handleFile(f);
           }}
         />
 
@@ -125,17 +140,47 @@ export default function UploadParser({ onParsed }: Props) {
               Extracting fields from your document
             </p>
           </div>
-        ) : success ? (
+        ) : parsedData ? (
           <div>
             <div className="w-12 h-12 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto mb-4">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
             </div>
             <p className="text-sm font-medium text-gray-900">
-              Parsed successfully!
+              Ready to apply
             </p>
             <p className="text-xs text-gray-500 mt-1">
-              Loading form with extracted data...
+              {file?.name ? (
+                <>
+                  Extracted data from <span className="font-medium text-gray-700">{file.name}</span>.
+                  Use the button below to fill the form — you can still edit everything before saving.
+                </>
+              ) : (
+                "Use the button below to fill the form — you can still edit everything before saving."
+              )}
             </p>
+            <div className="mt-5 flex flex-col sm:flex-row gap-2 sm:justify-center">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onApplyToForm(parsedData);
+                }}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-b from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 shadow-md shadow-indigo-500/25 ring-1 ring-indigo-500/15"
+              >
+                Apply extracted data to form
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  clearReadyState();
+                  setError(null);
+                }}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-700 bg-white ring-1 ring-slate-200 hover:bg-slate-50"
+              >
+                Upload another file
+              </button>
+            </div>
           </div>
         ) : (
           <div>
@@ -161,7 +206,7 @@ export default function UploadParser({ onParsed }: Props) {
               type="button"
               onClick={() => {
                 setError(null);
-                setFile(null);
+                clearReadyState();
               }}
               className="text-xs text-red-600 underline mt-1"
             >
@@ -201,9 +246,11 @@ export default function UploadParser({ onParsed }: Props) {
             </p>
             <p className="text-xs text-gray-500 leading-relaxed">
               Upload an existing credit application document. The system will
-              extract supported fields into an editable form. Any fields not
-              supported will be listed so you know what was dropped. You can
-              review and edit all extracted data before saving.
+              extract supported fields. When parsing finishes, click{" "}
+              <span className="font-medium text-gray-700">Apply extracted data to form</span>{" "}
+              to pre-fill the form. Any fields not supported will be listed so
+              you know what was dropped. You can upload again at any time from
+              this tab.
             </p>
           </div>
         </div>
