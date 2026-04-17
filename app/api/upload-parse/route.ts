@@ -1,26 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+import pdfParse from "pdf-parse";
 
 export const runtime = "nodejs";
 
-let pdfWorkerConfigured = false;
-
-async function createPdfParser(buf: Buffer) {
-  const { PDFParse } = await import("pdf-parse");
-  if (!pdfWorkerConfigured) {
-    const workerFile = path.join(
-      process.cwd(),
-      "node_modules",
-      "pdfjs-dist",
-      "legacy",
-      "build",
-      "pdf.worker.mjs"
-    );
-    PDFParse.setWorker(pathToFileURL(workerFile).href);
-    pdfWorkerConfigured = true;
-  }
-  return new PDFParse({ data: buf });
+async function extractPdfText(buf: Buffer): Promise<string> {
+  const data = await pdfParse(buf);
+  return (data.text ?? "").trim();
 }
 
 const CREDIT_TERMS = ["net_10", "net_20", "net_30"] as const;
@@ -144,13 +129,7 @@ async function extractDocumentText(file: File): Promise<string> {
   const buf = Buffer.from(await file.arrayBuffer());
 
   if (lowerName.endsWith(".pdf") || file.type === "application/pdf") {
-    const parser = await createPdfParser(buf);
-    try {
-      const result = await parser.getText();
-      return (result.text ?? "").trim();
-    } finally {
-      await parser.destroy();
-    }
+    return extractPdfText(buf);
   }
 
   if (
