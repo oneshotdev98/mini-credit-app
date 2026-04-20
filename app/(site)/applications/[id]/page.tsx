@@ -4,6 +4,7 @@ import { listCustomFieldDefinitions } from "@/lib/custom-field-definitions";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { appBaseUrl } from "@/lib/app-base-url";
 import {
   formatCurrency,
   formatCreditTerm,
@@ -42,9 +43,8 @@ export default async function ApplicationDetailPage(props: {
     "approved_with_adjustments",
     "rejected",
   ].includes(app.status);
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
   const applyUrl = app.accessToken
-    ? `${baseUrl}/apply/${app.accessToken}`
+    ? `${appBaseUrl()}/apply/${app.accessToken}`
     : null;
 
   const editInitialData = {

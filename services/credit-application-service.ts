@@ -7,6 +7,7 @@ import type {
   SendBody,
   VendorDraftApplicationBody,
 } from "@/lib/schemas/application";
+import { appBaseUrl } from "@/lib/app-base-url";
 import { generateToken } from "@/lib/utils";
 import {
   notifyRecipientInvite,
@@ -132,8 +133,7 @@ export async function serviceSendApplication(
   Result<{ recipientEmail: string; emailDeliveredBySmtp: boolean }>
 > {
   const token = generateToken();
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-  const applyUrl = `${baseUrl}/apply/${token}`;
+  const applyUrl = `${appBaseUrl()}/apply/${token}`;
 
   try {
     await db
@@ -224,9 +224,7 @@ export async function serviceSubmitApplication(
       }
     });
 
-    const baseUrl =
-      process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-    const reviewUrl = `${baseUrl}/applications/${app.id}`;
+    const reviewUrl = `${appBaseUrl()}/applications/${app.id}`;
     await notifyVendorSubmission({
       companyName: body.companyName.trim(),
       reviewUrl,
