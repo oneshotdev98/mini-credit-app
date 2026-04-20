@@ -13,6 +13,18 @@ import {
   notifyVendorSubmission,
 } from "@/services/mailer";
 
+function normalizeCustomFieldValues(
+  input: Record<string, string> | undefined
+): Record<string, string> {
+  if (!input || typeof input !== "object") return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (typeof v !== "string") continue;
+    out[k] = v.trim();
+  }
+  return out;
+}
+
 type Ok<T> = { ok: true; data: T };
 type Err = { ok: false; error: string };
 type Result<T> = Ok<T> | Err;
@@ -34,6 +46,7 @@ export async function serviceCreateApplication(
           revenueBand: body.revenueBand ?? null,
           billingContactName: body.billingContactName?.trim() || null,
           billingContactEmail: body.billingContactEmail?.trim() || null,
+          customFieldValues: normalizeCustomFieldValues(body.customFieldValues),
         })
         .returning();
 
@@ -80,6 +93,7 @@ export async function serviceUpdateApplication(
           revenueBand: body.revenueBand ?? null,
           billingContactName: body.billingContactName?.trim() || null,
           billingContactEmail: body.billingContactEmail?.trim() || null,
+          customFieldValues: normalizeCustomFieldValues(body.customFieldValues),
           updatedAt: new Date(),
         })
         .where(eq(creditApplications.id, applicationId));
@@ -184,6 +198,7 @@ export async function serviceSubmitApplication(
           revenueBand: body.revenueBand ?? null,
           billingContactName: body.billingContactName?.trim() || null,
           billingContactEmail: body.billingContactEmail?.trim() || null,
+          customFieldValues: normalizeCustomFieldValues(body.customFieldValues),
           submittedAt: new Date(),
           updatedAt: new Date(),
         })

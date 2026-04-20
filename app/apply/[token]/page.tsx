@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { creditApplications } from "@/db/schema";
+import { listCustomFieldDefinitions } from "@/lib/custom-field-definitions";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
@@ -9,6 +10,8 @@ export default async function ApplyPage(props: {
   params: Promise<{ token: string }>;
 }) {
   const { token } = await props.params;
+
+  const customFieldDefinitions = await listCustomFieldDefinitions();
 
   const app = await db.query.creditApplications.findFirst({
     where: eq(creditApplications.accessToken, token),
@@ -113,6 +116,7 @@ export default async function ApplyPage(props: {
                 <div className="px-4 sm:px-6 py-6 sm:py-8 bg-slate-50/50">
                   <RecipientForm
                     token={token}
+                    customFieldDefinitions={customFieldDefinitions}
                     initialData={{
                       companyName: app.companyName,
                       dba: app.dba,
@@ -123,6 +127,7 @@ export default async function ApplyPage(props: {
                       revenueBand: app.revenueBand,
                       billingContactName: app.billingContactName,
                       billingContactEmail: app.billingContactEmail,
+                      customFieldValues: app.customFieldValues ?? {},
                       tradeRef1: ref1
                         ? {
                             businessName: ref1.businessName,

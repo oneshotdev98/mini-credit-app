@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractPdfText } from "@/lib/extract-pdf-text";
+import { listCustomFieldDefinitions } from "@/lib/custom-field-definitions";
 
 export const runtime = "nodejs";
 
@@ -29,9 +30,11 @@ Return ONLY a valid JSON object with these exact fields (use null for missing va
   "billingContactEmail": string | null,
   "tradeRef1": { "businessName": string | null, "contactName": string | null, "contactEmail": string | null, "contactPosition": string | null, "engagementStart": "YYYY-MM-DD" | null, "engagementEnd": "YYYY-MM-DD" | null } | null,
   "tradeRef2": { "businessName": string | null, "contactName": string | null, "contactEmail": string | null, "contactPosition": string | null, "engagementStart": "YYYY-MM-DD" | null, "engagementEnd": "YYYY-MM-DD" | null } | null,
+  "unmappedFields": [ { "label": string, "value": string | null } ],
   "droppedFields": string[]
 }
-For "droppedFields", list human-readable labels for document content that does not map to the fields above (e.g. "Bank reference section", "Personal guarantor name").
+For "unmappedFields", include ONLY distinct extra labels that do NOT belong in company name, DBA, website, country, billing contact, credit amount/term, revenue band, or trade references — e.g. "Trade License No", "Tax ID". Never put company name, address lines, phone, or email here if they map to standard fields above. Use a short human-readable label and the best extracted value (or null if none). Do not duplicate content already mapped to standard fields.
+For "droppedFields", list only narrative sections or content that cannot be expressed as a label/value pair (e.g. long free-text paragraphs).
 For creditAmountRequested, return digits only as a string (e.g. "50000") with no currency symbols or commas.
 Return ONLY the JSON object, no markdown fences or explanation.`;
 
@@ -94,11 +97,34 @@ function parseModelJson(content: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function buildResponseFromParsed(parsed: Record<string, unknown>) {
+function normalizeUnmappedFields(
+  raw: unknown
+): Array<{ label: string; value: string | null }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ label: string; value: string | null }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const label = toNullableString(o.label);
+    if (!label) continue;
+    const value =
+      o.value == null ? null : toNullableString(o.value);
+    out.push({ label, value });
+  }
+  return out;
+}
+
+async function buildJsonResponseFromParsed(
+  parsed: Record<string, unknown>,
+  source: "ai" | "basic"
+) {
   const droppedRaw = parsed.droppedFields;
   const droppedFields = Array.isArray(droppedRaw)
     ? droppedRaw.filter((x): x is string => typeof x === "string")
     : [];
+
+  const customFieldCandidates = normalizeUnmappedFields(parsed.unmappedFields);
+  const definitions = await listCustomFieldDefinitions();
 
   return NextResponse.json({
     data: {
@@ -115,7 +141,10 @@ function buildResponseFromParsed(parsed: Record<string, unknown>) {
       tradeRef2: normalizeTradeRef(parsed.tradeRef2),
     },
     droppedFields,
-    source: "ai",
+    customFieldDefinitions: definitions,
+    customFieldCandidates,
+    customFieldValues: {} as Record<string, string>,
+    source,
   });
 }
 
@@ -195,7 +224,7 @@ async function parseWithGroq(text: string, filename: string, apiKey: string) {
   if (!res.ok) {
     const err = await res.text();
     console.error("Groq API error:", res.status, err);
-    return parseBasic(text);
+    return await parseBasic(text);
   }
 
   const result = (await res.json()) as {
@@ -203,19 +232,19 @@ async function parseWithGroq(text: string, filename: string, apiKey: string) {
   };
   const content = result.choices?.[0]?.message?.content ?? "";
   if (!content) {
-    return parseBasic(text);
+    return await parseBasic(text);
   }
 
   try {
     const parsed = parseModelJson(content);
-    return buildResponseFromParsed(parsed);
+    return await buildJsonResponseFromParsed(parsed, "ai");
   } catch (e) {
     console.error("Groq JSON parse error:", e, content.slice(0, 500));
-    return parseBasic(text);
+    return await parseBasic(text);
   }
 }
 
-function parseBasic(text: string) {
+async function parseBasic(text: string) {
   const data: Record<string, string | null> = {
     companyName: null,
     dba: null,
@@ -255,9 +284,13 @@ function parseBasic(text: string) {
   );
   if (countryMatch) data.countryOfIncorporation = countryMatch[1].trim();
 
+  const definitions = await listCustomFieldDefinitions();
   return NextResponse.json({
     data,
     droppedFields: [] as string[],
+    customFieldDefinitions: definitions,
+    customFieldCandidates: [] as Array<{ label: string; value: string | null }>,
+    customFieldValues: {} as Record<string, string>,
     source: "basic",
   });
 }
@@ -294,7 +327,7 @@ export async function POST(request: NextRequest) {
       return await parseWithGroq(text, file.name, groqKey);
     }
 
-    return parseBasic(text);
+    return await parseBasic(text);
   } catch (e: unknown) {
     console.error("Upload parse error:", e);
     const message = e instanceof Error ? e.message : "Unknown error";

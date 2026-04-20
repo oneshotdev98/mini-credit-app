@@ -13,6 +13,21 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+export const applicationCustomFieldDefinitions = pgTable(
+  "application_custom_field_definitions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    slug: text("slug").notNull().unique(),
+    label: text("label").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("application_custom_field_definitions_created_at_idx").on(t.createdAt),
+  ],
+);
+
 export const applicationStatusEnum = pgEnum("application_status", [
   "draft",
   "sent",
@@ -71,6 +86,11 @@ export const creditApplications = pgTable(
 
     aiRecommendationSummary: text("ai_recommendation_summary"),
     apolloPrefillPayload: jsonb("apollo_prefill_payload").$type<Record<string, unknown>>(),
+
+    customFieldValues: jsonb("custom_field_values")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

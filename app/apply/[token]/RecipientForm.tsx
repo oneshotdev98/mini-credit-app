@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { applicationBodyFromFormData } from "@/lib/application-payload-from-form";
 import ApplicationForm from "@/components/ApplicationForm";
+import type { CustomFieldDefinition } from "@/lib/custom-field-definitions";
 
 type TradeRef = {
   businessName?: string | null;
@@ -15,6 +16,7 @@ type TradeRef = {
 
 type Props = {
   token: string;
+  customFieldDefinitions: CustomFieldDefinition[];
   initialData: {
     companyName?: string | null;
     dba?: string | null;
@@ -25,6 +27,7 @@ type Props = {
     revenueBand?: string | null;
     billingContactName?: string | null;
     billingContactEmail?: string | null;
+    customFieldValues?: Record<string, string>;
     tradeRef1?: TradeRef;
     tradeRef2?: TradeRef;
   };
@@ -55,8 +58,9 @@ function pickNonEmpty(
 }
 
 /**
- * After a successful Apollo match, prefer Apollo for firmographic fields the
- * user just looked up—vendor draft placeholders should not hide fresh Apollo data.
+ * Prefer non-empty Apollo data, then vendor draft, then the legal name the user
+ * typed on step 1 (always keep at least that for company name when external
+ * data is missing).
  */
 function mergeRecipientInitial(
   server: Props["initialData"],
@@ -66,9 +70,11 @@ function mergeRecipientInitial(
 ): Props["initialData"] {
   const typed = typedBusinessName.trim();
 
+  let merged: Props["initialData"];
+
   if (options?.apolloMatched && apollo) {
     const a = apollo;
-    return {
+    merged = {
       companyName: pickNonEmpty(a.companyName, server.companyName) ?? typed,
       dba: pickNonEmpty(server.dba, a.dba),
       countryOfIncorporation: pickNonEmpty(
@@ -81,30 +87,44 @@ function mergeRecipientInitial(
       revenueBand: pickNonEmpty(a.revenueBand, server.revenueBand),
       billingContactName: pickNonEmpty(server.billingContactName, undefined),
       billingContactEmail: pickNonEmpty(server.billingContactEmail, undefined),
+      customFieldValues: server.customFieldValues ?? {},
+      tradeRef1: server.tradeRef1,
+      tradeRef2: server.tradeRef2,
+    };
+  } else {
+    merged = {
+      companyName:
+        pickNonEmpty(apollo?.companyName, server.companyName) ?? typed,
+      dba: pickNonEmpty(server.dba, apollo?.dba),
+      countryOfIncorporation: pickNonEmpty(
+        server.countryOfIncorporation,
+        apollo?.countryOfIncorporation
+      ),
+      websiteUrl: pickNonEmpty(server.websiteUrl, apollo?.websiteUrl),
+      creditAmountRequested: pickNonEmpty(server.creditAmountRequested, undefined),
+      creditTermRequested: pickNonEmpty(server.creditTermRequested, undefined),
+      revenueBand: pickNonEmpty(server.revenueBand, apollo?.revenueBand),
+      billingContactName: pickNonEmpty(server.billingContactName, undefined),
+      billingContactEmail: pickNonEmpty(server.billingContactEmail, undefined),
+      customFieldValues: server.customFieldValues ?? {},
       tradeRef1: server.tradeRef1,
       tradeRef2: server.tradeRef2,
     };
   }
 
-  return {
-    companyName: pickNonEmpty(server.companyName, apollo?.companyName) ?? typed,
-    dba: pickNonEmpty(server.dba, apollo?.dba),
-    countryOfIncorporation: pickNonEmpty(
-      server.countryOfIncorporation,
-      apollo?.countryOfIncorporation
-    ),
-    websiteUrl: pickNonEmpty(server.websiteUrl, apollo?.websiteUrl),
-    creditAmountRequested: pickNonEmpty(server.creditAmountRequested, undefined),
-    creditTermRequested: pickNonEmpty(server.creditTermRequested, undefined),
-    revenueBand: pickNonEmpty(server.revenueBand, apollo?.revenueBand),
-    billingContactName: pickNonEmpty(server.billingContactName, undefined),
-    billingContactEmail: pickNonEmpty(server.billingContactEmail, undefined),
-    tradeRef1: server.tradeRef1,
-    tradeRef2: server.tradeRef2,
-  };
+  const cn = merged.companyName?.trim();
+  if (!cn && typed) {
+    merged = { ...merged, companyName: typed };
+  }
+
+  return merged;
 }
 
-export default function RecipientForm({ token, initialData }: Props) {
+export default function RecipientForm({
+  token,
+  customFieldDefinitions,
+  initialData,
+}: Props) {
   const [submitted, setSubmitted] = useState(false);
   const [step, setStep] = useState<"business" | "form">("business");
   const [businessNameInput, setBusinessNameInput] = useState(
@@ -114,6 +134,8 @@ export default function RecipientForm({ token, initialData }: Props) {
   const [formKey, setFormKey] = useState(0);
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
+  /** Shown on the form step when lookup failed but we continued with your typed name */
+  const [prefillNotice, setPrefillNotice] = useState<string | null>(null);
 
   if (submitted) {
     return (
@@ -191,6 +213,7 @@ export default function RecipientForm({ token, initialData }: Props) {
               const name = businessNameInput.trim();
               if (!name) return;
               setLookupError(null);
+              setPrefillNotice(null);
               setFormInitial(mergeRecipientInitial(initialData, null, name));
               setFormKey((k) => k + 1);
               setStep("form");
@@ -207,6 +230,7 @@ export default function RecipientForm({ token, initialData }: Props) {
               if (!name) return;
               setLookupBusy(true);
               setLookupError(null);
+              setPrefillNotice(null);
               try {
                 const res = await fetch(
                   `/api/apply/${encodeURIComponent(token)}/apollo-prefill`,
@@ -222,7 +246,12 @@ export default function RecipientForm({ token, initialData }: Props) {
                   data?: ApolloData;
                 };
                 if (!res.ok) {
-                  setLookupError(payload.error ?? "Lookup failed.");
+                  setPrefillNotice(
+                    `${payload.error ?? "Company lookup failed."} Your legal business name below is filled from what you entered.`
+                  );
+                  setFormInitial(mergeRecipientInitial(initialData, null, name));
+                  setFormKey((k) => k + 1);
+                  setStep("form");
                   return;
                 }
                 const apollo = payload.data ?? null;
@@ -232,10 +261,22 @@ export default function RecipientForm({ token, initialData }: Props) {
                     apolloMatched,
                   })
                 );
+                if (!apolloMatched) {
+                  setPrefillNotice(
+                    "No close match was found in the directory. Your legal business name is filled from what you entered; add other details manually."
+                  );
+                } else {
+                  setPrefillNotice(null);
+                }
                 setFormKey((k) => k + 1);
                 setStep("form");
               } catch {
-                setLookupError("Something went wrong. Try again or skip lookup.");
+                setPrefillNotice(
+                  "Company lookup could not complete. Your legal business name below is filled from what you entered."
+                );
+                setFormInitial(mergeRecipientInitial(initialData, null, name));
+                setFormKey((k) => k + 1);
+                setStep("form");
               } finally {
                 setLookupBusy(false);
               }
@@ -263,30 +304,45 @@ export default function RecipientForm({ token, initialData }: Props) {
     );
   }
 
+  const customSlugs = customFieldDefinitions.map((d) => d.slug);
+
   return (
-    <ApplicationForm
-      key={formKey}
-      onSubmit={async (fd) => {
-        const res = await fetch(
-          `/api/apply/${encodeURIComponent(token)}/submit`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(applicationBodyFromFormData(fd)),
+    <div className="space-y-4">
+      {prefillNotice ? (
+        <div
+          className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950"
+          role="status"
+        >
+          {prefillNotice}
+        </div>
+      ) : null}
+      <ApplicationForm
+        key={formKey}
+        customFieldDefinitions={customFieldDefinitions}
+        onSubmit={async (fd) => {
+          const res = await fetch(
+            `/api/apply/${encodeURIComponent(token)}/submit`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+              applicationBodyFromFormData(fd, customSlugs, formInitial)
+            ),
+            }
+          );
+          const data = (await res.json()) as { error?: string; success?: string };
+          if (!res.ok) {
+            return { error: data.error ?? "Failed to submit application." };
           }
-        );
-        const data = (await res.json()) as { error?: string; success?: string };
-        if (!res.ok) {
-          return { error: data.error ?? "Failed to submit application." };
-        }
-        if (data.success === "submitted") {
-          setSubmitted(true);
-        }
-        return {};
-      }}
-      initialData={formInitial}
-      submitLabel="Submit application"
-      isRecipient
-    />
+          if (data.success === "submitted") {
+            setSubmitted(true);
+          }
+          return {};
+        }}
+        initialData={formInitial}
+        submitLabel="Submit application"
+        isRecipient
+      />
+    </div>
   );
 }

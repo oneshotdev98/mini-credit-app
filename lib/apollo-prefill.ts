@@ -76,6 +76,21 @@ function mapCountryToSelectList(countryRaw: unknown): string | null {
   return "Other";
 }
 
+/** Apollo sometimes returns country as a string, ISO code, or nested object. */
+function countryStringFromUnknown(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw === "string") {
+    const t = raw.trim();
+    return t.length ? t : null;
+  }
+  if (typeof raw === "object" && !Array.isArray(raw) && raw !== null) {
+    const o = raw as Record<string, unknown>;
+    const name = o.name ?? o.label ?? o.country_name;
+    if (typeof name === "string" && name.trim()) return name.trim();
+  }
+  return null;
+}
+
 function revenueBandFromAnnualUsd(n: number): ApolloPrefillFields["revenueBand"] {
   if (!Number.isFinite(n) || n <= 0) return null;
   if (n < 10_000_000) return "1_10m";
@@ -122,14 +137,29 @@ function readEmployeeCount(org: Record<string, unknown>): number | null {
 }
 
 function readCountry(org: Record<string, unknown>): string | null {
-  const raw =
-    org.country ??
-    org.primary_country ??
-    org.hq_country ??
-    org.organization_country ??
-    org.organization_hq_country;
-  if (typeof raw !== "string" || !raw.trim()) return null;
-  return mapCountryToSelectList(raw.trim());
+  const candidates: unknown[] = [
+    org.country,
+    org.primary_country,
+    org.hq_country,
+    org.organization_country,
+    org.organization_hq_country,
+    org.organization_country_name,
+    org.sanitized_country,
+    org.account_country,
+    org.organization_country_code,
+    org.country_code,
+    org.primary_country_code,
+    org.hq_country_code,
+  ];
+
+  for (const raw of candidates) {
+    const s = countryStringFromUnknown(raw);
+    if (!s) continue;
+    const mapped = mapCountryToSelectList(s);
+    if (mapped) return mapped;
+  }
+
+  return null;
 }
 
 export function mapApolloOrganization(

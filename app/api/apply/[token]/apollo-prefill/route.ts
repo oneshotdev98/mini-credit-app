@@ -74,6 +74,14 @@ export async function POST(
   }
 
   const first = search.organizations[0];
+  if (process.env.NODE_ENV === "development") {
+    if (!first) {
+      console.warn(
+        "[apollo-prefill] No organization in results for query:",
+        businessName
+      );
+    }
+  }
   const mapped = first
     ? mapApolloOrganization(first)
     : {
@@ -84,13 +92,25 @@ export async function POST(
         revenueBand: null,
       };
 
+  const resolvedCompanyName =
+    typeof mapped.companyName === "string" && mapped.companyName.trim() !== ""
+      ? mapped.companyName.trim()
+      : businessName;
+
   const data = {
-    companyName: mapped.companyName ?? businessName,
+    companyName: resolvedCompanyName,
     dba: mapped.dba,
     countryOfIncorporation: mapped.countryOfIncorporation,
     websiteUrl: mapped.websiteUrl,
     revenueBand: mapped.revenueBand,
   };
+
+  if (process.env.NODE_ENV === "development" && first && data.countryOfIncorporation == null) {
+    console.warn(
+      "[apollo-prefill] Matched org has no country after mapping — inspect topMatch in DB or keys:",
+      Object.keys(first).slice(0, 48)
+    );
+  }
 
   try {
     await db

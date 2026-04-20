@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { creditApplications, tradeReferences } from "@/db/schema";
+import { listCustomFieldDefinitions } from "@/lib/custom-field-definitions";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import Link from "next/link";
@@ -20,6 +21,8 @@ export default async function ApplicationDetailPage(props: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await props.params;
+
+  const customFieldDefinitions = await listCustomFieldDefinitions();
 
   const app = await db.query.creditApplications.findFirst({
     where: eq(creditApplications.id, id),
@@ -74,6 +77,7 @@ export default async function ApplicationDetailPage(props: {
           contactPosition: ref2.contactPosition,
         }
       : undefined,
+    customFieldValues: app.customFieldValues ?? {},
   };
 
   const pageMaxWidth = isEditable ? "max-w-6xl" : "max-w-3xl";
@@ -165,7 +169,11 @@ export default async function ApplicationDetailPage(props: {
             <SendPanel applicationId={app.id} />
           </aside>
           <div className="min-w-0 lg:col-span-7 xl:col-span-8 lg:order-1">
-            <EditMode applicationId={app.id} initialData={editInitialData} />
+            <EditMode
+              applicationId={app.id}
+              customFieldDefinitions={customFieldDefinitions}
+              initialData={editInitialData}
+            />
           </div>
         </div>
       ) : (
@@ -179,6 +187,20 @@ export default async function ApplicationDetailPage(props: {
               <DataField label="Website" value={app.websiteUrl} isUrl />
             </div>
           </ReadOnlySection>
+
+          {customFieldDefinitions.length > 0 ? (
+            <ReadOnlySection title="Additional information" icon="layers">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                {customFieldDefinitions.map((d) => (
+                  <DataField
+                    key={d.slug}
+                    label={d.label}
+                    value={app.customFieldValues?.[d.slug] ?? null}
+                  />
+                ))}
+              </div>
+            </ReadOnlySection>
+          ) : null}
 
           {refs.map((ref) => (
             <ReadOnlySection
@@ -461,8 +483,10 @@ function ReadOnlySection({
     users: "bg-orange-50 text-orange-600",
     dollar: "bg-emerald-50 text-emerald-600",
     receipt: "bg-purple-50 text-purple-600",
+    layers: "bg-slate-100 text-slate-700",
   };
   const iconSvg: Record<string, React.ReactNode> = {
+    layers: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
     building: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/></svg>,
     users: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
     dollar: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,

@@ -1,6 +1,7 @@
 import { serviceSubmitApplication } from "@/services/credit-application-service";
 import { zodErrorMessage } from "@/lib/api-parse";
-import { recipientSubmitBodySchema } from "@/lib/schemas/application";
+import { buildRecipientSubmitBodySchema } from "@/lib/schemas/application";
+import { listCustomFieldDefinitions } from "@/lib/custom-field-definitions";
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -17,7 +18,11 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const parsed = recipientSubmitBodySchema.safeParse(json);
+  const defs = await listCustomFieldDefinitions();
+  const requiredCustomSlugs = defs.map((d) => d.slug);
+  const parsed = buildRecipientSubmitBodySchema(requiredCustomSlugs).safeParse(
+    json
+  );
   if (!parsed.success) {
     return NextResponse.json(
       { error: zodErrorMessage(parsed.error) },

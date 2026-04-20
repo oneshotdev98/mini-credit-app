@@ -3,13 +3,15 @@
 import type { FormSubmitState } from "@/lib/form-submit-state";
 import {
   applicationBodyFromFormData,
+  suggestedPlaceholder,
   vendorDraftBodyFromFormData,
 } from "@/lib/application-payload-from-form";
 import { zodErrorMessage } from "@/lib/api-parse";
 import {
-  recipientSubmitBodySchema,
+  buildRecipientSubmitBodySchema,
   vendorDraftApplicationBodySchema,
 } from "@/lib/schemas/application";
+import type { CustomFieldDefinition } from "@/lib/custom-field-definitions";
 import { COUNTRIES, CREDIT_TERMS, REVENUE_BANDS } from "@/lib/utils";
 import type { ZodIssue } from "zod";
 import { useState, type FormEvent } from "react";
@@ -60,11 +62,14 @@ type ApplicationData = {
   billingContactEmail?: string | null;
   tradeRef1?: TradeRef;
   tradeRef2?: TradeRef;
+  customFieldValues?: Record<string, string>;
 };
 
 type Props = {
   onSubmit: (formData: FormData) => Promise<FormSubmitState>;
   initialData?: ApplicationData;
+  /** Globally registered extra fields (from document upload discovery). */
+  customFieldDefinitions?: CustomFieldDefinition[];
   submitLabel?: string;
   /** Vendor draft: company name optional; recipient completes on apply link. */
   draftMode?: boolean;
@@ -74,6 +79,7 @@ type Props = {
 export default function ApplicationForm({
   onSubmit,
   initialData,
+  customFieldDefinitions = [],
   submitLabel = "Save Application",
   draftMode = false,
   isRecipient = false,
@@ -95,9 +101,16 @@ export default function ApplicationForm({
     setState({});
     setEngagementErrors({});
     const fd = new FormData(e.currentTarget);
+    const customSlugs = customFieldDefinitions.map((d) => d.slug);
     if (recipientStrict) {
-      const body = applicationBodyFromFormData(fd);
-      const parsed = recipientSubmitBodySchema.safeParse(body);
+      const body = applicationBodyFromFormData(
+        fd,
+        customSlugs,
+        initialData
+      );
+      const parsed = buildRecipientSubmitBodySchema(customSlugs).safeParse(
+        body
+      );
       if (!parsed.success) {
         setEngagementErrors(
           engagementMessagesByTradeRef(parsed.error.issues)
@@ -112,7 +125,7 @@ export default function ApplicationForm({
         return;
       }
     } else if (draftMode) {
-      const body = vendorDraftBodyFromFormData(fd);
+      const body = vendorDraftBodyFromFormData(fd, customSlugs, initialData);
       const parsed = vendorDraftApplicationBodySchema.safeParse(body);
       if (!parsed.success) {
         const engagementByRef = engagementMessagesByTradeRef(
@@ -150,9 +163,12 @@ export default function ApplicationForm({
     ? "pb-[max(5.75rem,calc(4.25rem+env(safe-area-inset-bottom)))]"
     : "pb-[max(7.5rem,calc(5.5rem+env(safe-area-inset-bottom)))]";
 
+  const skipNativeValidation = recipientStrict || draftMode;
+
   return (
     <form
       onSubmit={handleSubmit}
+      noValidate={skipNativeValidation}
       className={`space-y-5 sm:space-y-6 animate-in ${formBottomPad}`}
     >
       {state.error && (
@@ -180,8 +196,11 @@ export default function ApplicationForm({
               name="companyName"
               type="text"
               required={recipientStrict}
-              defaultValue={initialData?.companyName ?? ""}
-              placeholder="Acme Corporation"
+              defaultValue=""
+              placeholder={suggestedPlaceholder(
+                initialData?.companyName,
+                "Acme Corporation"
+              )}
             />
           </div>
           <div>
@@ -190,8 +209,8 @@ export default function ApplicationForm({
               id="dba"
               name="dba"
               type="text"
-              defaultValue={initialData?.dba ?? ""}
-              placeholder="Acme Co"
+              defaultValue=""
+              placeholder={suggestedPlaceholder(initialData?.dba, "Acme Co")}
             />
           </div>
           <div>
@@ -205,7 +224,12 @@ export default function ApplicationForm({
               id="countryOfIncorporation"
               name="countryOfIncorporation"
               required={recipientStrict}
-              defaultValue={initialData?.countryOfIncorporation ?? ""}
+              defaultValue=""
+              title={
+                initialData?.countryOfIncorporation?.trim()
+                  ? `Suggested: ${initialData.countryOfIncorporation}`
+                  : undefined
+              }
             >
               <option value="">Select country...</option>
               {COUNTRIES.map((c) => (
@@ -224,12 +248,48 @@ export default function ApplicationForm({
               type={recipientStrict ? "text" : "url"}
               inputMode={recipientStrict ? "url" : undefined}
               required={recipientStrict}
-              defaultValue={initialData?.websiteUrl ?? ""}
-              placeholder="https://example.com"
+              defaultValue=""
+              placeholder={suggestedPlaceholder(
+                initialData?.websiteUrl,
+                "https://example.com"
+              )}
             />
           </div>
         </div>
       </FormSection>
+
+      {customFieldDefinitions.length > 0 ? (
+        <FormSection icon="layers" title="Additional information" number={2}>
+          <p className="text-xs text-slate-500 -mt-1 mb-4 leading-relaxed">
+            These fields were added from uploaded documents or earlier
+            applications. They are saved with this application
+            {recipientStrict ? " and are required before submit" : ""}.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
+            {customFieldDefinitions.map((def) => (
+              <div key={def.slug}>
+                <label htmlFor={`customField__${def.slug}`}>
+                  {def.label}
+                  {recipientStrict && (
+                    <span className="text-red-400"> *</span>
+                  )}
+                </label>
+                <input
+                  id={`customField__${def.slug}`}
+                  name={`customField__${def.slug}`}
+                  type="text"
+                  required={recipientStrict}
+                  defaultValue=""
+                  placeholder={suggestedPlaceholder(
+                    initialData?.customFieldValues?.[def.slug],
+                    ""
+                  )}
+                />
+              </div>
+            ))}
+          </div>
+        </FormSection>
+      ) : null}
 
       {[1, 2].map((slot) => {
         const ref = slot === 1 ? initialData?.tradeRef1 : initialData?.tradeRef2;
@@ -302,8 +362,11 @@ export default function ApplicationForm({
                       name={`tradeRef${slot}_businessName`}
                       type="text"
                       required={recipientStrict}
-                      defaultValue={ref?.businessName ?? ""}
-                      placeholder="Reference company name"
+                      defaultValue=""
+                      placeholder={suggestedPlaceholder(
+                        ref?.businessName,
+                        "Reference company name"
+                      )}
                       onChange={(e) => {
                         if (!draftMode || e.target.value?.trim()) return;
                         setEngagementErrors((prev) => {
@@ -323,7 +386,12 @@ export default function ApplicationForm({
                       id={`tradeRef${slot}_engagementStart`}
                       name={`tradeRef${slot}_engagementStart`}
                       type="date"
-                      defaultValue={ref?.engagementStart ?? ""}
+                      defaultValue=""
+                      title={
+                        ref?.engagementStart?.trim()
+                          ? `Suggested: ${ref.engagementStart}`
+                          : undefined
+                      }
                       onChange={() =>
                         setEngagementErrors((prev) => {
                           if (!prev[tradeRefKey]) return prev;
@@ -342,7 +410,12 @@ export default function ApplicationForm({
                       id={`tradeRef${slot}_engagementEnd`}
                       name={`tradeRef${slot}_engagementEnd`}
                       type="date"
-                      defaultValue={ref?.engagementEnd ?? ""}
+                      defaultValue=""
+                      title={
+                        ref?.engagementEnd?.trim()
+                          ? `Suggested: ${ref.engagementEnd}`
+                          : undefined
+                      }
                       onChange={() =>
                         setEngagementErrors((prev) => {
                           if (!prev[tradeRefKey]) return prev;
@@ -369,8 +442,11 @@ export default function ApplicationForm({
                       id={`tradeRef${slot}_contactName`}
                       name={`tradeRef${slot}_contactName`}
                       type="text"
-                      defaultValue={ref?.contactName ?? ""}
-                      placeholder="Jane Smith"
+                      defaultValue=""
+                      placeholder={suggestedPlaceholder(
+                        ref?.contactName,
+                        "Jane Smith"
+                      )}
                     />
                   </div>
                   <div>
@@ -381,8 +457,11 @@ export default function ApplicationForm({
                       id={`tradeRef${slot}_contactEmail`}
                       name={`tradeRef${slot}_contactEmail`}
                       type="email"
-                      defaultValue={ref?.contactEmail ?? ""}
-                      placeholder="jane@company.com"
+                      defaultValue=""
+                      placeholder={suggestedPlaceholder(
+                        ref?.contactEmail,
+                        "jane@company.com"
+                      )}
                     />
                   </div>
                   <div className="sm:col-span-2">
@@ -393,8 +472,11 @@ export default function ApplicationForm({
                       id={`tradeRef${slot}_contactPosition`}
                       name={`tradeRef${slot}_contactPosition`}
                       type="text"
-                      defaultValue={ref?.contactPosition ?? ""}
-                      placeholder="Account Manager"
+                      defaultValue=""
+                      placeholder={suggestedPlaceholder(
+                        ref?.contactPosition,
+                        "Account Manager"
+                      )}
                     />
                   </div>
                 </div>
@@ -404,7 +486,7 @@ export default function ApplicationForm({
         );
       })}
 
-      <FormSection icon="dollar" title="Credit Details" number={4}>
+      <FormSection icon="dollar" title="Credit Details" number={3}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-4">
           <div>
             <label htmlFor="creditAmountRequested">
@@ -420,8 +502,11 @@ export default function ApplicationForm({
                 name="creditAmountRequested"
                 type="text"
                 required={recipientStrict}
-                defaultValue={initialData?.creditAmountRequested ?? ""}
-                placeholder="50,000"
+                defaultValue=""
+                placeholder={suggestedPlaceholder(
+                  initialData?.creditAmountRequested,
+                  "50,000"
+                )}
                 style={{ paddingLeft: "1.5rem" }}
               />
             </div>
@@ -435,7 +520,12 @@ export default function ApplicationForm({
               id="creditTermRequested"
               name="creditTermRequested"
               required={creditTermRequired}
-              defaultValue={initialData?.creditTermRequested ?? ""}
+              defaultValue=""
+              title={
+                initialData?.creditTermRequested
+                  ? `Suggested: ${CREDIT_TERMS.find((t) => t.value === initialData.creditTermRequested)?.label ?? initialData.creditTermRequested}`
+                  : undefined
+              }
             >
               <option value="">Select term...</option>
               {CREDIT_TERMS.map((t) => (
@@ -452,7 +542,12 @@ export default function ApplicationForm({
               id="revenueBand"
               name="revenueBand"
               required={recipientStrict}
-              defaultValue={initialData?.revenueBand ?? ""}
+              defaultValue=""
+              title={
+                initialData?.revenueBand
+                  ? `Suggested: ${REVENUE_BANDS.find((b) => b.value === initialData.revenueBand)?.label ?? initialData.revenueBand}`
+                  : undefined
+              }
             >
               <option value="">Select range...</option>
               {REVENUE_BANDS.map((b) => (
@@ -464,7 +559,7 @@ export default function ApplicationForm({
       </FormSection>
 
       {/* Billing Contact */}
-      <FormSection icon="receipt" title="Billing Contact" number={5}>
+      <FormSection icon="receipt" title="Billing Contact" number={4}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
           <div>
             <label htmlFor="billingContactName">
@@ -476,8 +571,11 @@ export default function ApplicationForm({
               name="billingContactName"
               type="text"
               required={recipientStrict}
-              defaultValue={initialData?.billingContactName ?? ""}
-              placeholder="John Doe"
+              defaultValue=""
+              placeholder={suggestedPlaceholder(
+                initialData?.billingContactName,
+                "John Doe"
+              )}
             />
           </div>
           <div>
@@ -490,8 +588,11 @@ export default function ApplicationForm({
               name="billingContactEmail"
               type="email"
               required={recipientStrict}
-              defaultValue={initialData?.billingContactEmail ?? ""}
-              placeholder="billing@company.com"
+              defaultValue=""
+              placeholder={suggestedPlaceholder(
+                initialData?.billingContactEmail,
+                "billing@company.com"
+              )}
             />
           </div>
         </div>
@@ -560,6 +661,9 @@ function FormSection({
   children: React.ReactNode;
 }) {
   const iconMap: Record<string, React.ReactNode> = {
+    layers: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+    ),
     building: (
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/></svg>
     ),
@@ -572,6 +676,7 @@ function FormSection({
   };
 
   const colors: Record<string, string> = {
+    layers: "bg-slate-100 text-slate-700",
     building: "bg-indigo-50 text-indigo-600",
     dollar: "bg-emerald-50 text-emerald-600",
     receipt: "bg-purple-50 text-purple-600",

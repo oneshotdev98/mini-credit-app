@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { creditApplications } from "@/db/schema";
+import { listCustomFieldDefinitions } from "@/lib/custom-field-definitions";
 import { formatCreditTerm, formatCurrency, formatRevenueBand } from "@/lib/utils";
 import { eq } from "drizzle-orm";
 
@@ -85,6 +86,9 @@ export async function serviceEnsureAiRecommendationSummary(
     };
   }
 
+  const defs = await listCustomFieldDefinitions();
+  const labelBySlug = new Map(defs.map((d) => [d.slug, d.label]));
+
   const refs = app.tradeReferences.sort((a, b) => a.slot - b.slot);
   const refLines = refs.map((r) => {
     const parts = [
@@ -98,6 +102,13 @@ export async function serviceEnsureAiRecommendationSummary(
     return parts.join(", ");
   });
 
+  const customLines = Object.entries(app.customFieldValues ?? {})
+    .filter(([, v]) => typeof v === "string" && v.trim().length > 0)
+    .map(
+      ([slug, v]) =>
+        `${labelBySlug.get(slug) ?? slug}=${String(v).trim()}`
+    );
+
   const userPayload = [
     `companyName=${app.companyName ?? ""}`,
     `dba=${app.dba ?? ""}`,
@@ -108,7 +119,12 @@ export async function serviceEnsureAiRecommendationSummary(
     `revenueBand=${app.revenueBand ?? ""} (${formatRevenueBand(app.revenueBand)})`,
     `billingContact=${app.billingContactName ?? ""} <${app.billingContactEmail ?? ""}>`,
     `tradeReferences:\n- ${refLines.join("\n- ")}`,
-  ].join("\n");
+    customLines.length
+      ? `additionalFields:\n- ${customLines.join("\n- ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const model = process.env.GROQ_MODEL?.trim() || "llama-3.1-8b-instant";
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import type { CustomFieldDefinition } from "@/lib/custom-field-definitions";
 
 type ParsedData = {
   companyName?: string | null;
@@ -30,17 +31,81 @@ type ParsedData = {
   };
 };
 
-type Props = {
-  onApplyToForm: (data: ParsedData) => void;
+export type CustomFieldCandidate = {
+  label: string;
+  value: string | null;
 };
+
+export type UploadApplyPayload = {
+  data: ParsedData;
+  customFieldValues: Record<string, string>;
+  customFieldDefinitions: CustomFieldDefinition[];
+};
+
+type Props = {
+  onApplyToForm: (payload: UploadApplyPayload) => void;
+};
+
+function squish(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+/** Strip decorative quotes and extra spaces from parser output. */
+function stripQuotes(s: string): string {
+  let t = squish(s);
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith("'") && t.endsWith("'"))
+  ) {
+    t = t.slice(1, -1).trim();
+  }
+  return squish(t);
+}
+
+function normalizeForCompare(s: string): string {
+  return stripQuotes(s).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** True when the extracted value repeats the label (common with ALL-CAPS docs). */
+function isRedundantLabelValue(label: string, value: string | null): boolean {
+  if (value == null || !String(value).trim()) return false;
+  const a = normalizeForCompare(label);
+  const b = normalizeForCompare(String(value));
+  return a.length > 0 && b.length > 0 && a === b;
+}
+
+/** Soften ALL CAPS for on-screen reading; keep original in form submit via API. */
+function formatExtractedPreview(value: string): string {
+  const v = stripQuotes(value);
+  if (!v) return v;
+  const letters = v.replace(/[^a-zA-Z]/g, "");
+  if (letters.length < 2) return v;
+  const upperRatio =
+    [...letters].filter((c) => c === c.toUpperCase()).length / letters.length;
+  if (upperRatio < 0.65) return v;
+  return v
+    .toLowerCase()
+    .split(/(\s+)/)
+    .map((w) => {
+      if (/^\s+$/.test(w) || !w.length) return w;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    })
+    .join("");
+}
 
 export default function UploadParser({ onApplyToForm }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [droppedFields, setDroppedFields] = useState<string[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
+  const [candidates, setCandidates] = useState<CustomFieldCandidate[]>([]);
+  /** Indices of candidates the user wants as additional form fields */
+  const [selectedCandidateIdx, setSelectedCandidateIdx] = useState<
+    Set<number>
+  >(() => new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const resetFileInput = () => {
@@ -49,6 +114,8 @@ export default function UploadParser({ onApplyToForm }: Props) {
 
   const clearReadyState = () => {
     setParsedData(null);
+    setCandidates([]);
+    setSelectedCandidateIdx(new Set());
     setDroppedFields([]);
     setFile(null);
     resetFileInput();
@@ -59,6 +126,8 @@ export default function UploadParser({ onApplyToForm }: Props) {
     setError(null);
     setDroppedFields([]);
     setParsedData(null);
+    setCandidates([]);
+    setSelectedCandidateIdx(new Set());
     setParsing(true);
 
     try {
@@ -75,13 +144,25 @@ export default function UploadParser({ onApplyToForm }: Props) {
         throw new Error(body.error || "Failed to parse file");
       }
 
-      const result = await res.json();
+      const result = (await res.json()) as {
+        data: ParsedData;
+        droppedFields?: string[];
+        customFieldCandidates?: CustomFieldCandidate[];
+      };
 
-      if (result.droppedFields?.length > 0) {
-        setDroppedFields(result.droppedFields);
+      const dropped = Array.isArray(result.droppedFields)
+        ? result.droppedFields
+        : [];
+      if (dropped.length > 0) {
+        setDroppedFields(dropped);
       }
 
-      setParsedData(result.data as ParsedData);
+      setParsedData(result.data);
+      setCandidates(
+        Array.isArray(result.customFieldCandidates)
+          ? result.customFieldCandidates
+          : []
+      );
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to parse the uploaded file.");
     } finally {
@@ -89,6 +170,52 @@ export default function UploadParser({ onApplyToForm }: Props) {
       resetFileInput();
     }
   };
+
+  async function applyToForm() {
+    if (!parsedData) return;
+    setApplying(true);
+    setError(null);
+    try {
+      const selections = candidates.filter((_, i) =>
+        selectedCandidateIdx.has(i)
+      );
+
+      const res = await fetch("/api/custom-field-definitions/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selections }),
+      });
+
+      const out = (await res.json()) as {
+        error?: string;
+        definitions?: CustomFieldDefinition[];
+        values?: Record<string, string>;
+      };
+
+      if (!res.ok) {
+        throw new Error(out.error ?? "Could not apply extra fields.");
+      }
+
+      onApplyToForm({
+        data: parsedData,
+        customFieldDefinitions: out.definitions ?? [],
+        customFieldValues: out.values ?? {},
+      });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to apply to form.");
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  function toggleCandidate(index: number) {
+    setSelectedCandidateIdx((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-5 animate-in">
@@ -152,25 +279,30 @@ export default function UploadParser({ onApplyToForm }: Props) {
               {file?.name ? (
                 <>
                   Extracted data from <span className="font-medium text-gray-700">{file.name}</span>.
-                  Use the button below to fill the form — you can still edit everything before saving.
+                  Review optional extra fields below, then apply to the form.
                 </>
               ) : (
-                "Use the button below to fill the form — you can still edit everything before saving."
+                "Review optional extra fields below, then apply to the form."
               )}
             </p>
             <div className="mt-5 flex flex-col sm:flex-row gap-2 sm:justify-center">
               <button
                 type="button"
+                disabled={applying}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onApplyToForm(parsedData);
+                  void applyToForm();
                 }}
-                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-b from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 shadow-md shadow-indigo-500/25 ring-1 ring-indigo-500/15"
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-b from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 shadow-md shadow-indigo-500/25 ring-1 ring-indigo-500/15 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Apply extracted data to form
+                {applying && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                )}
+                {applying ? "Applying…" : "Apply extracted data to form"}
               </button>
               <button
                 type="button"
+                disabled={applying}
                 onClick={(e) => {
                   e.stopPropagation();
                   clearReadyState();
@@ -197,6 +329,80 @@ export default function UploadParser({ onApplyToForm }: Props) {
         )}
       </div>
 
+      {parsedData && candidates.length > 0 ? (
+        <div className="rounded-2xl border border-slate-200/90 bg-white text-left shadow-[0_1px_3px_rgb(15_23_42/0.06)] ring-1 ring-slate-900/[0.04] overflow-hidden">
+          <div className="border-b border-slate-100 bg-gradient-to-b from-slate-50/90 to-white px-4 py-3.5 sm:px-5">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                  <polyline points="2 17 12 22 22 17" />
+                  <polyline points="2 12 12 17 22 12" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 tracking-tight">
+                  Optional extra fields
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5 leading-snug">
+                  Tick only what you want in{" "}
+                  <span className="text-slate-600">Additional information</span>.
+                  Others are ignored.
+                </p>
+              </div>
+            </div>
+          </div>
+          <ul className="max-h-[min(22rem,55vh)] overflow-y-auto overscroll-contain divide-y divide-slate-100">
+            {candidates.map((c, i) => {
+              const redundant = isRedundantLabelValue(c.label, c.value);
+              const selected = selectedCandidateIdx.has(i);
+              return (
+                <li key={`${c.label}-${i}`}>
+                  <label
+                    className={`flex cursor-pointer items-start gap-3 px-4 py-3 sm:px-5 transition-colors ${
+                      selected
+                        ? "bg-indigo-50/70"
+                        : "hover:bg-slate-50/80"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/30 focus:ring-offset-0"
+                      checked={selected}
+                      onChange={() => toggleCandidate(i)}
+                    />
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <p className="text-sm font-medium text-slate-900 leading-snug">
+                        {squish(c.label)}
+                      </p>
+                      {c.value && !redundant ? (
+                        <p className="text-[13px] leading-relaxed text-slate-600 line-clamp-3">
+                          {formatExtractedPreview(c.value)}
+                        </p>
+                      ) : !c.value ? (
+                        <p className="text-xs text-slate-400">
+                          No value extracted
+                        </p>
+                      ) : null}
+                    </div>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+
       {error && (
         <div className="flex items-start gap-3 p-4 rounded-lg bg-red-50 border border-red-200">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -216,13 +422,12 @@ export default function UploadParser({ onApplyToForm }: Props) {
         </div>
       )}
 
-      {/* Dropped Fields */}
       {droppedFields.length > 0 && (
         <div className="flex items-start gap-3 p-4 rounded-lg bg-amber-50 border border-amber-200">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           <div>
             <p className="text-sm font-medium text-amber-800">
-              Some fields from the upload were not supported:
+              Some content was not mapped to fields:
             </p>
             <ul className="mt-1.5 space-y-0.5">
               {droppedFields.map((f) => (
@@ -245,12 +450,11 @@ export default function UploadParser({ onApplyToForm }: Props) {
               How upload works
             </p>
             <p className="text-xs text-gray-500 leading-relaxed">
-              Upload an existing credit application document. The system will
-              extract supported fields. When parsing finishes, click{" "}
-              <span className="font-medium text-gray-700">Apply extracted data to form</span>{" "}
-              to pre-fill the form. Any fields not supported will be listed so
-              you know what was dropped. You can upload again at any time from
-              this tab.
+              Standard fields (company, credit, billing, etc.) are filled from
+              the document. Extra labeled items appear in the checklist
+              above—only checked items are added as additional form fields for
+              this and future applications. You can upload again at any time
+              from this tab.
             </p>
           </div>
         </div>

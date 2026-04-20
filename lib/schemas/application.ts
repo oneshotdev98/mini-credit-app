@@ -27,6 +27,14 @@ export const tradeRefSlotDraftSchema = z.object({
   contactPosition: z.string().optional().nullable(),
 });
 
+const customFieldValuesRecordSchema = z.preprocess(
+  (v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : {},
+  z.record(z.string(), z.string()).default({})
+);
+
 export const vendorDraftApplicationBodySchema = z
   .object({
     companyName: z
@@ -51,6 +59,7 @@ export const vendorDraftApplicationBodySchema = z
     billingContactEmail: z.string().optional().nullable(),
     tradeRef1: tradeRefSlotDraftSchema.optional().nullable(),
     tradeRef2: tradeRefSlotDraftSchema.optional().nullable(),
+    customFieldValues: customFieldValuesRecordSchema,
   })
   .superRefine((data, ctx) => {
     const slots = [
@@ -93,6 +102,7 @@ export const applicationBodySchema = z.object({
   billingContactEmail: z.string().optional().nullable(),
   tradeRef1: tradeRefSlotSchema.optional().nullable(),
   tradeRef2: tradeRefSlotSchema.optional().nullable(),
+  customFieldValues: customFieldValuesRecordSchema,
 });
 
 export type ApplicationBody = z.infer<typeof applicationBodySchema>;
@@ -145,64 +155,64 @@ const emptyTradeRef = (): z.infer<typeof tradeRefSlotSchema> => ({
   contactPosition: null,
 });
 
+const recipientSubmitBodyFieldsSchema = z.object({
+  companyName: z.preprocess(
+    strOrEmpty,
+    z.string().min(1, "Company name is required.")
+  ),
+  dba: z.string().optional().nullable(),
+  countryOfIncorporation: z.preprocess(
+    strOrEmpty,
+    z.string().min(1, "Country of incorporation is required.")
+  ),
+  websiteUrl: z.preprocess(
+    strOrEmpty,
+    z
+      .string()
+      .min(1, "Website URL is required.")
+      .refine((s) => reasonableUrl(s), "Enter a valid website URL.")
+  ),
+  creditAmountRequested: z.preprocess(
+    strOrEmpty,
+    z.string().min(1, "Credit amount requested is required.")
+  ),
+  creditTermRequested: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined),
+    z.enum(creditTermValues, {
+      message: "Select a credit term (Net 10 / 20 / 30).",
+    })
+  ),
+  revenueBand: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined),
+    z.enum(revenueBandValues, {
+      message: "Select a business revenue band.",
+    })
+  ),
+  billingContactName: z.preprocess(
+    strOrEmpty,
+    z.string().min(1, "Billing contact name is required.")
+  ),
+  billingContactEmail: z.preprocess(
+    strOrEmpty,
+    z
+      .string()
+      .min(1, "Billing contact email is required.")
+      .email("Enter a valid billing contact email.")
+  ),
+  tradeRef1: z.preprocess(
+    (v) => (v == null ? emptyTradeRef() : v),
+    tradeRefSlotSchema
+  ),
+  tradeRef2: z.preprocess(
+    (v) => (v == null ? emptyTradeRef() : v),
+    tradeRefSlotSchema
+  ),
+  customFieldValues: customFieldValuesRecordSchema,
+});
+
 /** Stricter rules when the applicant submits the apply link (client + API). */
-export const recipientSubmitBodySchema = z
-  .object({
-    companyName: z.preprocess(
-      strOrEmpty,
-      z.string().min(1, "Company name is required.")
-    ),
-    dba: z.string().optional().nullable(),
-    countryOfIncorporation: z.preprocess(
-      strOrEmpty,
-      z.string().min(1, "Country of incorporation is required.")
-    ),
-    websiteUrl: z.preprocess(
-      strOrEmpty,
-      z
-        .string()
-        .min(1, "Website URL is required.")
-        .refine((s) => reasonableUrl(s), "Enter a valid website URL.")
-    ),
-    creditAmountRequested: z.preprocess(
-      strOrEmpty,
-      z.string().min(1, "Credit amount requested is required.")
-    ),
-    creditTermRequested: z.preprocess(
-      (v) =>
-        typeof v === "string" && v.trim() !== "" ? v.trim() : undefined,
-      z.enum(creditTermValues, {
-        message: "Select a credit term (Net 10 / 20 / 30).",
-      })
-    ),
-    revenueBand: z.preprocess(
-      (v) =>
-        typeof v === "string" && v.trim() !== "" ? v.trim() : undefined,
-      z.enum(revenueBandValues, {
-        message: "Select a business revenue band.",
-      })
-    ),
-    billingContactName: z.preprocess(
-      strOrEmpty,
-      z.string().min(1, "Billing contact name is required.")
-    ),
-    billingContactEmail: z.preprocess(
-      strOrEmpty,
-      z
-        .string()
-        .min(1, "Billing contact email is required.")
-        .email("Enter a valid billing contact email.")
-    ),
-    tradeRef1: z.preprocess(
-      (v) => (v == null ? emptyTradeRef() : v),
-      tradeRefSlotSchema
-    ),
-    tradeRef2: z.preprocess(
-      (v) => (v == null ? emptyTradeRef() : v),
-      tradeRefSlotSchema
-    ),
-  })
-  .superRefine((data, ctx) => {
+export function buildRecipientSubmitBodySchema(requiredCustomSlugs: string[]) {
+  return recipientSubmitBodyFieldsSchema.superRefine((data, ctx) => {
     if (!engagementDatesPaired(data.tradeRef1)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -241,9 +251,22 @@ export const recipientSubmitBodySchema = z
         path: ["tradeRef2", "engagementEnd"],
       });
     }
+    for (const slug of requiredCustomSlugs) {
+      const val = data.customFieldValues[slug];
+      if (typeof val !== "string" || !val.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "This field is required.",
+          path: ["customFieldValues", slug],
+        });
+      }
+    }
   });
+}
 
-export type RecipientSubmitBody = z.infer<typeof recipientSubmitBodySchema>;
+export const recipientSubmitBodySchema = buildRecipientSubmitBodySchema([]);
+
+export type RecipientSubmitBody = z.infer<typeof recipientSubmitBodyFieldsSchema>;
 
 export const sendBodySchema = z.object({
   recipientName: z.string().min(1, "Recipient name is required."),

@@ -2,6 +2,7 @@
 
 import ApplicationForm from "@/components/ApplicationForm";
 import { vendorDraftBodyFromFormData } from "@/lib/application-payload-from-form";
+import type { CustomFieldDefinition } from "@/lib/custom-field-definitions";
 import { useRouter } from "next/navigation";
 
 type TradeRef = {
@@ -15,6 +16,7 @@ type TradeRef = {
 
 type Props = {
   applicationId: string;
+  customFieldDefinitions: CustomFieldDefinition[];
   initialData: {
     companyName?: string | null;
     dba?: string | null;
@@ -27,10 +29,15 @@ type Props = {
     billingContactEmail?: string | null;
     tradeRef1?: TradeRef;
     tradeRef2?: TradeRef;
+    customFieldValues?: Record<string, string>;
   };
 };
 
-export default function EditMode({ applicationId, initialData }: Props) {
+export default function EditMode({
+  applicationId,
+  customFieldDefinitions,
+  initialData,
+}: Props) {
   const router = useRouter();
 
   return (
@@ -48,11 +55,15 @@ export default function EditMode({ applicationId, initialData }: Props) {
         </div>
       </div>
       <ApplicationForm
+        customFieldDefinitions={customFieldDefinitions}
         onSubmit={async (fd) => {
+          const slugs = customFieldDefinitions.map((d) => d.slug);
           const res = await fetch(`/api/applications/${applicationId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(vendorDraftBodyFromFormData(fd)),
+            body: JSON.stringify(
+              vendorDraftBodyFromFormData(fd, slugs, initialData)
+            ),
           });
           const data = (await res.json()) as { error?: string };
           if (!res.ok) {
